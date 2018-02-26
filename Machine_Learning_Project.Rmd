@@ -1,0 +1,207 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Ron Vaughan"
+date: "February 25, 2018"
+output: html_document
+---
+# Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here:  [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+# Data
+
+The training data for this project are available here: 
+
+[pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from this source: 
+
+[http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har). 
+
+# Steps for the project
+1. Load libraries
+2. Load data, create training and testing subsets, and clean the training/testing subsets
+3. Exploratory Analysis
+4. Build Prediction Model
+5. Apply Model to Test Data
+
+## 1. Load libraries and set a seed
+
+```{r load_libraries, warning = FALSE, message = FALSE}
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(corrplot)
+set.seed(12345)
+```
+
+
+## 2. Load data, create training and testing subsets, and clean the training/testing subsets
+
+This assumes the user has downloaded the data into their working directory.  After loading the data, create the training and testing subsets of the training data.  Once the training data sets are created, clean the training data set to remove NA and NZV attributes and reduce data set to values of interest. 
+
+```{r load_data}
+pmlTrain <- read.csv("pml-training.csv")  # training data for the model, to be parsed into two data sets
+pmlTest <- read.csv("pml-testing.csv")  # testing data for quiz portion of the project, no cleaning required
+
+training <- createDataPartition(pmlTrain$classe, p=0.7, list=FALSE)
+trainSet <- pmlTrain[training, ]
+testSet <- pmlTrain[-training, ]
+dim(trainSet)
+dim(testSet)
+
+```
+
+### 2.1 Cleaning the training/testing subsets
+
+```{r clean_subsets}
+# Remove variables with Near Zero Variance
+NZV <- nearZeroVar(trainSet)
+trainSet <- trainSet[, -NZV]
+testSet <- testSet[, -NZV]
+dim(trainSet)
+dim(testSet)
+
+# Remove variables that are mostly NA
+allNA <- sapply(trainSet, function(x) mean(is.na(x))) > 0.95
+trainSet <- trainSet[, allNA==FALSE]
+testSet <- testSet[, allNA==FALSE]
+dim(trainSet)
+dim(testSet)
+
+# remove ID varaibles (columns 1 - 5)
+trainSet <- trainSet[, -(1:5)]
+testSet <- testSet[, -(1:5)]
+dim(trainSet)
+dim(testSet)
+```
+
+As a result of cleaning the data, we've reduced the number of variables for analysis to 54.  
+
+## 3. Exploratory Analysis
+
+Conduct an exploratory analysis of the `trainSet` dataset.  It is assumed that the data reflecting the two datas subsets will be the same except for number of objects.  We will examine:  
+
+* Structure of 'trainSet'
+* An correlation plot of `trainSet`
+
+### 3.1 Structure
+
+We look at the structdure of 'trainSet'
+
+```{r structure}
+str(trainSet)
+```
+
+### 3.2 Correlation plot
+We look at the correlation among the variables.  
+
+```{r correlation_plot}
+corMatrix <- cor(trainSet[, -54])
+corrplot(corMatrix, order = "FPC", 
+         method = "color", 
+         type = "lower", 
+         tl.cex = .8, 
+         tl.col = rgb(0,0,0))
+```
+
+The higly correlated variables are shown in dark colors in the correlation graph above.  
+
+## 4. Build Prediction Models
+
+We'll look at three prediction models using the training dataset 'trainSet':
+
+* Random Forests
+* Decision Trees
+* GBM
+
+to evaluate which has the best prediction results.  The metod wiht the best prediction result will be applied to the test dataset 'testSet' to generate the quiz results.  A confusion matrix is plotted at the end of each analysis to better visualize the accuracy ratings.
+
+### 4.1 Random Forests method
+
+```{r random_forest}
+# model fit
+set.seed(12345)
+ctrlRF <- trainControl(method = "cv", number=3, verboseIter=FALSE)
+modFitRF <- train(classe ~ ., data=trainSet, method="rf", trControl = ctrlRF)
+modFitRF$finalModel
+
+#prediction on testSet dataset
+predictRF <- predict(modFitRF, newdata=testSet)
+cMatrixRF <- confusionMatrix(predictRF, testSet$classe)
+cMatrixRF
+
+#plot matrix results
+plot(cMatrixRF$table,
+     col = cMatrixRF$byClass,
+     main = paste("Random Forest Accuracy = ", round(cMatrixRF$overall['Accuracy'], 4)))
+
+```
+
+### 4.2 Decision Trees method
+
+```{r decision_trees}
+# model fit
+set.seed(12345)
+modFitDT <- rpart(classe ~ ., data=trainSet, method="class")
+fancyRpartPlot(modFitDT)
+
+#prediction on testSet dataset
+predictDT <- predict(modFitDT, newdata=testSet, type="class")
+cMatrixDT <- confusionMatrix(predictDT, testSet$classe)
+cMatrixDT
+
+#plot matrix results
+plot(cMatrixDT$table,
+     col = cMatrixDT$byClass,
+     main = paste("Decision Trees Accuracy = ", round(cMatrixDT$overall['Accuracy'], 4)))
+
+```
+
+### 4.3 GBM method
+
+```{r gbm}
+# model fit
+set.seed(12345)
+ctrlGBM <- trainControl(method = "repeatedcv", number=5, repeats=1)
+modFitGBM <- train(classe ~ ., 
+                   data=trainSet, 
+                   method="gbm", 
+                   trControl = ctrlGBM, 
+                   verbose = FALSE)
+modFitGBM$finalModel
+
+#prediction on testSet dataset
+predictGBM <- predict(modFitGBM, newdata=testSet)
+cMatrixGBM <- confusionMatrix(predictGBM, testSet$classe)
+cMatrixGBM
+
+#plot matrix results
+plot(cMatrixGBM$table,
+     col = cMatrixGBM$byClass,
+     main = paste("GBM Accuracy = ", round(cMatrixGBM$overall['Accuracy'], 4)))
+
+```
+
+## 5. Apply Model to Test Data
+
+The accuracy of the three prediction models are:
+
+* Random Forest: 0.9968
+* Decision Trees: 0.7368
+* GBM: 0.9857
+
+Since the Random Forest method generated the best accuracy rating, this method will be used to predict the 20 quiz answewrs using the testing dataset 'plmTest'
+
+```{r quiz_prediction}
+predictTest <- predict(modFitRF, newdata=pmlTest)
+predictTest
+```
+
